@@ -25,12 +25,9 @@
 
 #ifndef PS2Keyboard_h
 #define PS2Keyboard_h
+ 
+#include <Arduino.h> // for attachInterrupt, FALLING
 
-#if defined(ARDUINO) && ARDUINO >= 100
-#include "Arduino.h" // for attachInterrupt, FALLING
-#else
-#include "WProgram.h"
-#endif
 
 #include "utility/int_pins.h"
 
