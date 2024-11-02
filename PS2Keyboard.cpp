@@ -54,9 +54,14 @@
 static volatile uint8_t buffer[BUFFER_SIZE];
 static volatile uint8_t head, tail;
 static uint8_t DataPin;
+static uint8_t IRQPin;
 static uint8_t CharBuffer=0;
 static uint8_t UTF8next=0;
 static const PS2Keymap_t *keymap=NULL;
+static bool capsLockOn = false;
+static bool numLockOn = false;
+static bool scrollLockOn = false;
+static byte ledState = 0;
 
 // The ISR for the external interrupt
 void IRAM_ATTR ps2interrupt(void)
@@ -160,6 +165,14 @@ const PROGMEM PS2Keymap_t PS2Keymap_US = {
 #define SHIFT_R   0x08
 #define ALTGR     0x10
 
+#define SCROLL_LOCK 0x01 
+#define NUM_LOCK    0x02 
+#define CAPS_LOCK   0x04 
+
+#define LED_CONTROL 0xED
+
+
+
 static char get_iso8859_code(void)
 {
 	static uint8_t state=0;
@@ -195,8 +208,29 @@ static char get_iso8859_code(void)
 				continue;
 			} else if (s == 0x11 && (state & MODIFIER)) {
 				state |= ALTGR;
-			}
-			c = 0;
+            } else if (s == 0x58) {
+                capsLockOn = !capsLockOn;
+                if (capsLockOn) { 
+					ledState |= CAPS_LOCK;  
+                } else { 
+					ledState &= ~CAPS_LOCK;  
+                }
+            } else if (s == 0x77) {
+                numLockOn = !numLockOn;
+                if (numLockOn) {  
+					ledState |= NUM_LOCK;  
+                } else {  
+					ledState &= ~NUM_LOCK;  
+                }
+            } else if (s == 0x7E) {
+                scrollLockOn = !scrollLockOn;
+                if (scrollLockOn) {  
+					ledState |= SCROLL_LOCK;  
+                } else {  
+					ledState &= ~SCROLL_LOCK;  
+                }
+			}	
+            c = 0;
 			if (state & MODIFIER) {
 				switch (s) {
 				  case 0x70: c = PS2_INSERT;      break;
@@ -216,18 +250,30 @@ static char get_iso8859_code(void)
 			} else if ((state & ALTGR) && pgm_read_byte(keymap->uses_altgr)) {
 				if (s < PS2_KEYMAP_SIZE)
 					c = pgm_read_byte(keymap->altgr + s);
-			} else if (state & (SHIFT_L | SHIFT_R)) {
-				if (s < PS2_KEYMAP_SIZE)
-					c = pgm_read_byte(keymap->shift + s);
-			} else {
-				if (s < PS2_KEYMAP_SIZE)
-					c = pgm_read_byte(keymap->noshift + s);
+			} else if(capsLockOn){
+				if (state & (SHIFT_L | SHIFT_R)) {
+				   if (s < PS2_KEYMAP_SIZE)
+					   c = pgm_read_byte(keymap->noshift + s);
+			    } else {
+				    if (s < PS2_KEYMAP_SIZE)
+					    c = pgm_read_byte(keymap->shift + s);
+			    }
+			} else{
+				if (state & (SHIFT_L | SHIFT_R)) {
+				    if (s < PS2_KEYMAP_SIZE)
+					    c = pgm_read_byte(keymap->shift + s);
+			    } else {
+				    if (s < PS2_KEYMAP_SIZE)
+					    c = pgm_read_byte(keymap->noshift + s);
+			   }
 			}
 			state &= ~(BREAK | MODIFIER);
 			if (c) return c;
 		}
 	}
 }
+
+
 
 bool PS2Keyboard::available() {
 	if (CharBuffer || UTF8next) return true;
@@ -285,6 +331,7 @@ PS2Keyboard::PS2Keyboard() {
 
 void PS2Keyboard::begin(uint8_t data_pin, uint8_t irq_pin, const PS2Keymap_t &map) { 
   uint8_t irq_num = irq_pin;
+  IRQPin= irq_pin;
   DataPin = data_pin;
   keymap = &map;
 
