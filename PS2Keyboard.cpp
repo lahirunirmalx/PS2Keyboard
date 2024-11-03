@@ -5,8 +5,8 @@
 
   ** Mostly rewritten Paul Stoffregen <paul@pjrc.com> 2010, 2011
   ** Modified for use beginning with Arduino 13 by L. Abraham Smith, <n3bah@microcompdesign.com> * 
-  ** Modified for easy interrup pin assignement on method begin(datapin,irq_pin). Cuningan <cuninganreset@gmail.com> **
-  ** Modified for ESP32 support **
+  ** Modified for easy interrup pin assignement on method begin(datapin,irq_pin). Cuningan <cuninganreset@gmail.com> *
+  ** Modified for ESP32 support *
 
   for more information you can read the original wiki in arduino.cc
   at http://www.arduino.cc/playground/Main/PS2Keyboard
