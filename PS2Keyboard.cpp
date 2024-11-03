@@ -53,7 +53,7 @@
 #define BUFFER_SIZE 45
 static volatile uint8_t buffer[BUFFER_SIZE];
 static volatile uint8_t head, tail;
-static uint8_t DataPin;
+static uint8_t dataPin;
 static uint8_t IRQPin;
 static uint8_t CharBuffer=0;
 static uint8_t UTF8next=0;
@@ -63,50 +63,121 @@ static bool numLockOn = false;
 static bool scrollLockOn = false;
 static byte ledState = 0;
 
-// The ISR for the external interrupt
-void IRAM_ATTR ps2interrupt(void)
-{
-	static uint8_t bitcount=0;
-	static uint8_t incoming=0;
-	static uint32_t prev_ms=0;
-	uint32_t now_ms;
-	uint8_t n, val;
+#define LED_CONTROL 0xED
 
-	val = digitalRead(DataPin);
-	now_ms = millis();
-	if (now_ms - prev_ms > 250) {
-		bitcount = 0;
-		incoming = 0;
-	}
-	prev_ms = now_ms;
-	n = bitcount - 1;
-	if (n <= 7) {
-		incoming |= (val << n);
-	}
-	bitcount++;
-	if (bitcount == 11) {
-		uint8_t i = head + 1;
-		if (i >= BUFFER_SIZE) i = 0;
-		if (i != tail) {
-			buffer[i] = incoming;
-			head = i;
-		}
-		bitcount = 0;
-		incoming = 0;
-	}
+#ifdef ESP32
+#define SUPPORT_IRAM_ATTR IRAM_ATTR
+#else
+#define SUPPORT_IRAM_ATTR  // Empty definition for non-ESP32 boards
+#endif
+
+
+void sendPS2Command(byte command) { 
+    pinMode(dataPin, OUTPUT);
+    pinMode(IRQPin, OUTPUT);
+
+    unsigned long startMicros = micros();   
+
+    digitalWrite(dataPin, LOW);
+    while (micros() - startMicros < 100); 
+    startMicros = micros();  
+
+    digitalWrite(IRQPin, LOW);
+    while (micros() - startMicros < 15);  
+    startMicros = micros();
+
+    for (int i = 0; i < 8; i++) {
+        digitalWrite(IRQPin, HIGH);
+        while (micros() - startMicros < 15); 
+        startMicros = micros();
+
+        digitalWrite(dataPin, (command >> i) & 1);
+        while (micros() - startMicros < 15); 
+        startMicros = micros();
+
+        digitalWrite(IRQPin, LOW);
+        while (micros() - startMicros < 15); 
+        startMicros = micros();
+    }
+
+    // Send Parity bit
+    digitalWrite(IRQPin, HIGH);
+    digitalWrite(dataPin, HIGH);
+    while (micros() - startMicros < 15);   
+    startMicros = micros();
+
+    digitalWrite(IRQPin, LOW);
+    while (micros() - startMicros < 15);  
+    startMicros = micros();
+
+    // Send Stop bit
+    digitalWrite(IRQPin, HIGH);
+    digitalWrite(dataPin, HIGH);
+    while (micros() - startMicros < 100);   
+
+    // Set pins back to input mode
+#ifdef INPUT_PULLUP
+    pinMode(IRQPin, INPUT_PULLUP);
+    pinMode(dataPin, INPUT_PULLUP);
+#else
+    pinMode(IRQPin, INPUT);
+    digitalWrite(IRQPin, HIGH);
+    pinMode(DataPin, INPUT);
+    digitalWrite(DataPin, HIGH);
+#endif 
 }
 
-static inline uint8_t get_scan_code(void)
-{
-	uint8_t c, i;
+static void updateLEDs(byte command){
+	
+	//Serial.print(LED_CONTROL);
+	sendPS2Command(LED_CONTROL);
+   // Serial.print(command); 
+   sendPS2Command(command);
+   // Could not get this working 
+}
 
-	i = tail;
-	if (i == head) return 0;
-	i++;
-	if (i >= BUFFER_SIZE) i = 0;
-	c = buffer[i];
-	tail = i;
-	return c;
+// The ISR for the external interrupt
+void SUPPORT_IRAM_ATTR ps2interrupt(void) {
+  static uint8_t bitCount = 0;
+  static uint8_t incoming = 0;
+  static uint32_t prevMillis = 0;
+  uint32_t nowMillis;
+  uint8_t bitPos, val;
+
+  val = digitalRead(dataPin);
+  nowMillis = millis();
+  if (nowMillis - prevMillis > 250) {
+    bitCount = 0;
+    incoming = 0;
+  }
+  prevMillis = nowMillis;
+  bitPos = bitCount - 1;
+  if (bitPos <= 7) {
+    incoming |= (val << bitPos);
+  }
+  bitCount++;
+  if (bitCount == 11) {
+    uint8_t i = head + 1;
+    if (i >= BUFFER_SIZE) i = 0;
+    if (i != tail) {
+      buffer[i] = incoming;
+      head = i;
+    }
+    bitCount = 0;
+    incoming = 0;
+  }
+}
+
+static inline uint8_t getScanCode(void) {
+  uint8_t c, i;
+
+  i = tail;
+  if (i == head) return 0;
+  i++;
+  if (i >= BUFFER_SIZE) i = 0;
+  c = buffer[i];
+  tail = i;
+  return c;
 }
 
 // http://www.quadibloc.com/comp/scan.htm
@@ -173,105 +244,116 @@ const PROGMEM PS2Keymap_t PS2Keymap_US = {
 
 
 
-static char get_iso8859_code(void)
-{
-	static uint8_t state=0;
-	uint8_t s;
-	char c;
+static char get_iso8859_code(void) {
+    static uint8_t state = 0;
+    uint8_t scanCode;
+    char character;
 
-	while (1) {
-		s = get_scan_code();
-		if (!s) return 0;
-		if (s == 0xF0) {
-			state |= BREAK;
-		} else if (s == 0xE0) {
-			state |= MODIFIER;
-		} else {
-			if (state & BREAK) {
-				if (s == 0x12) {
-					state &= ~SHIFT_L;
-				} else if (s == 0x59) {
-					state &= ~SHIFT_R;
-				} else if (s == 0x11 && (state & MODIFIER)) {
-					state &= ~ALTGR;
-				}
-				// CTRL, ALT & WIN keys could be added
-				// but is that really worth the overhead?
-				state &= ~(BREAK | MODIFIER);
-				continue;
-			}
-			if (s == 0x12) {
-				state |= SHIFT_L;
-				continue;
-			} else if (s == 0x59) {
-				state |= SHIFT_R;
-				continue;
-			} else if (s == 0x11 && (state & MODIFIER)) {
-				state |= ALTGR;
-            } else if (s == 0x58) {
-                capsLockOn = !capsLockOn;
-                if (capsLockOn) { 
-					ledState |= CAPS_LOCK;  
-                } else { 
-					ledState &= ~CAPS_LOCK;  
+    while (1) {
+        // Retrieve the scan code
+        scanCode = getScanCode();
+        if (!scanCode) return 0; // No scan code available
+
+        // Handle special cases for scan codes
+        if (scanCode == 0xF0) {
+            state |= BREAK; // Set BREAK state
+        } else if (scanCode == 0xE0) {
+            state |= MODIFIER; // Set MODIFIER state for extended keys
+        } else {
+            // Handle key release (BREAK state)
+            if (state & BREAK) {
+                if (scanCode == 0x12) {
+                    state &= ~SHIFT_L; // Release Left Shift
+                } else if (scanCode == 0x59) {
+                    state &= ~SHIFT_R; // Release Right Shift
+                } else if (scanCode == 0x11 && (state & MODIFIER)) {
+                    state &= ~ALTGR; // Release AltGr
                 }
-            } else if (s == 0x77) {
-                numLockOn = !numLockOn;
-                if (numLockOn) {  
-					ledState |= NUM_LOCK;  
-                } else {  
-					ledState &= ~NUM_LOCK;  
+                // Reset states and continue to next scan code
+                state &= ~(BREAK | MODIFIER);
+                continue;
+            }
+
+            // Handle key press events for modifiers and locks
+            if (scanCode == 0x12) {
+                state |= SHIFT_L; // Left Shift pressed
+                continue;
+            } else if (scanCode == 0x59) {
+                state |= SHIFT_R; // Right Shift pressed
+                continue;
+            } else if (scanCode == 0x11 && (state & MODIFIER)) {
+                state |= ALTGR; // AltGr pressed
+            } else if (scanCode == 0x58) {
+                capsLockOn = !capsLockOn; // Toggle Caps Lock
+                ledState = capsLockOn ? (ledState | CAPS_LOCK) : (ledState & ~CAPS_LOCK);
+                updateLEDs(ledState);
+            } else if (scanCode == 0x77) {
+                numLockOn = !numLockOn; // Toggle Num Lock
+                ledState = numLockOn ? (ledState | NUM_LOCK) : (ledState & ~NUM_LOCK);
+				updateLEDs(ledState);
+            } else if (scanCode == 0x7E) {
+                scrollLockOn = !scrollLockOn; // Toggle Scroll Lock
+                ledState = scrollLockOn ? (ledState | SCROLL_LOCK) : (ledState & ~SCROLL_LOCK);
+				updateLEDs(ledState);
+            }
+
+            // Process scan codes based on the current state
+            character = 0;
+            if (state & MODIFIER) {
+                // Handle special keys with modifier (like arrow keys)
+                switch (scanCode) {
+                    case 0x70: character = PS2_INSERT;      break;
+                    case 0x6C: character = PS2_HOME;        break;
+                    case 0x7D: character = PS2_PAGEUP;      break;
+                    case 0x71: character = PS2_DELETE;      break;
+                    case 0x69: character = PS2_END;         break;
+                    case 0x7A: character = PS2_PAGEDOWN;    break;
+                    case 0x75: character = PS2_UPARROW;     break;
+                    case 0x6B: character = PS2_LEFTARROW;   break;
+                    case 0x72: character = PS2_DOWNARROW;   break;
+                    case 0x74: character = PS2_RIGHTARROW;  break;
+                    case 0x4A: character = '/';             break;
+                    case 0x5A: character = PS2_ENTER;       break;
+                    default: break;
                 }
-            } else if (s == 0x7E) {
-                scrollLockOn = !scrollLockOn;
-                if (scrollLockOn) {  
-					ledState |= SCROLL_LOCK;  
-                } else {  
-					ledState &= ~SCROLL_LOCK;  
+            } else if ((state & ALTGR) && pgm_read_byte(keymap->uses_altgr)) {
+                // Handle AltGr key combinations
+                if (scanCode < PS2_KEYMAP_SIZE) {
+                    character = pgm_read_byte(keymap->altgr + scanCode);
                 }
-			}	
-            c = 0;
-			if (state & MODIFIER) {
-				switch (s) {
-				  case 0x70: c = PS2_INSERT;      break;
-				  case 0x6C: c = PS2_HOME;        break;
-				  case 0x7D: c = PS2_PAGEUP;      break;
-				  case 0x71: c = PS2_DELETE;      break;
-				  case 0x69: c = PS2_END;         break;
-				  case 0x7A: c = PS2_PAGEDOWN;    break;
-				  case 0x75: c = PS2_UPARROW;     break;
-				  case 0x6B: c = PS2_LEFTARROW;   break;
-				  case 0x72: c = PS2_DOWNARROW;   break;
-				  case 0x74: c = PS2_RIGHTARROW;  break;
-				  case 0x4A: c = '/';             break;
-				  case 0x5A: c = PS2_ENTER;       break;
-				  default: break;
-				}
-			} else if ((state & ALTGR) && pgm_read_byte(keymap->uses_altgr)) {
-				if (s < PS2_KEYMAP_SIZE)
-					c = pgm_read_byte(keymap->altgr + s);
-			} else if(capsLockOn){
-				if (state & (SHIFT_L | SHIFT_R)) {
-				   if (s < PS2_KEYMAP_SIZE)
-					   c = pgm_read_byte(keymap->noshift + s);
-			    } else {
-				    if (s < PS2_KEYMAP_SIZE)
-					    c = pgm_read_byte(keymap->shift + s);
-			    }
-			} else{
-				if (state & (SHIFT_L | SHIFT_R)) {
-				    if (s < PS2_KEYMAP_SIZE)
-					    c = pgm_read_byte(keymap->shift + s);
-			    } else {
-				    if (s < PS2_KEYMAP_SIZE)
-					    c = pgm_read_byte(keymap->noshift + s);
-			   }
-			}
-			state &= ~(BREAK | MODIFIER);
-			if (c) return c;
-		}
-	}
+            } else if (capsLockOn) {
+                // Handle Caps Lock with or without Shift keys
+                if (state & (SHIFT_L | SHIFT_R)) {
+                    if (scanCode < PS2_KEYMAP_SIZE) {
+                        character = pgm_read_byte(keymap->noshift + scanCode);
+                    }
+                } else {
+                    if (scanCode < PS2_KEYMAP_SIZE) {
+                        character = pgm_read_byte(keymap->shift + scanCode);
+                    }
+                }
+            } else {
+                // Handle regular Shift and non-Shift key states
+                if (state & (SHIFT_L | SHIFT_R)) {
+                    if (scanCode < PS2_KEYMAP_SIZE) {
+                        character = pgm_read_byte(keymap->shift + scanCode);
+                    }
+                } else {
+                    if (scanCode < PS2_KEYMAP_SIZE) {
+                        character = pgm_read_byte(keymap->noshift + scanCode);
+                    }
+                }
+            }
+
+            // Reset the states for the next scan code processing
+            state &= ~(BREAK | MODIFIER);
+
+            // Return the character if one was generated
+            if (character) return character;
+        }
+    }
 }
+
 
 
 
@@ -289,7 +371,7 @@ void PS2Keyboard::clear() {
 
 uint8_t PS2Keyboard::readScanCode(void)
 {
-	return get_scan_code();
+	return getScanCode();
 }
 
 int PS2Keyboard::read() {
@@ -332,7 +414,7 @@ PS2Keyboard::PS2Keyboard() {
 void PS2Keyboard::begin(uint8_t data_pin, uint8_t irq_pin, const PS2Keymap_t &map) { 
   uint8_t irq_num = irq_pin;
   IRQPin= irq_pin;
-  DataPin = data_pin;
+  dataPin = data_pin;
   keymap = &map;
 
   // initialize the pins
