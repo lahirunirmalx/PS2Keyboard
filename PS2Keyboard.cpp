@@ -71,51 +71,71 @@ static byte ledState = 0;
 #define SUPPORT_IRAM_ATTR  // Empty definition for non-ESP32 boards
 #endif
 
+// Parity check
+// Return true for odd parity.
+static bool parityCheck(uint16_t data)
+{
+   uint8_t count = 0; 
+    for (int i = 0; i < 10; i++) {
+        count += (data >> i) & 1;   
+    } 
+    return count % 2 != 0;
+}
+/*
+code taken from https://karooza.net/how-to-interface-a-ps2-keyboard
+parity was needed and the writing should have done on rising edeg not in falling 
+*/
+static void sendPS2Command(uint8_t cmdCode) {
+    uint16_t cmd = cmdCode;  // Cast to 16-bit to add parity and stop bits
 
-static void sendPS2Command(byte command) { 
-    pinMode(dataPin, OUTPUT);
-    pinMode(IRQPin, OUTPUT);
-
-    unsigned long startMicros = micros();   
-
-    digitalWrite(dataPin, LOW);
-    while (micros() - startMicros < 100); 
-    startMicros = micros();  
-
-    digitalWrite(IRQPin, LOW);
-    while (micros() - startMicros < 15);  
-    startMicros = micros();
-
-    for (int i = 0; i < 8; i++) {
-        digitalWrite(IRQPin, HIGH);
-        while (micros() - startMicros < 15); 
-        startMicros = micros();
-
-        digitalWrite(dataPin, (command >> i) & 1);
-        while (micros() - startMicros < 15); 
-        startMicros = micros();
-
-        digitalWrite(IRQPin, LOW);
-        while (micros() - startMicros < 15); 
-        startMicros = micros();
+    // Add parity bit if not already set
+    if (!parityCheck(cmd)) {
+        cmd |= 0x0100;
     }
 
-    // Send Parity bit
-    digitalWrite(IRQPin, HIGH);
-    digitalWrite(dataPin, HIGH);
-    while (micros() - startMicros < 15);   
-    startMicros = micros();
+    // Add stop bit
+    cmd |= 0x0200;
 
+    // Set clock and data pins to output mode
+    pinMode(IRQPin, OUTPUT);
+    pinMode(dataPin, OUTPUT);
+
+    // Start Request to Send by pulling clock low for 100us
     digitalWrite(IRQPin, LOW);
-    while (micros() - startMicros < 15);  
+    unsigned long startMicros = micros();
+    while (micros() - startMicros < 100);  // Wait for 100us
+
+    // Pull data low to send the start bit
+    digitalWrite(dataPin, LOW);
     startMicros = micros();
+    while (micros() - startMicros < 20);   // Wait for 20us
 
-    // Send Stop bit
-    digitalWrite(IRQPin, HIGH);
-    digitalWrite(dataPin, HIGH);
-    while (micros() - startMicros < 100);   
+    // Release clock line, allowing it to go high
+    pinMode(IRQPin, INPUT_PULLUP);
 
-    // Set pins back to input mode
+    // Send 8 data bits, 1 parity bit, and 1 stop bit
+    for (int i = 0; i < 10; i++) {
+        // Wait for keyboard to take clock low (start of bit transmission)
+        while (digitalRead(IRQPin) > 0);
+
+        // Write the current bit to the data line
+        digitalWrite(dataPin, cmd & 0x0001);
+        cmd >>= 1;  // Shift to the next bit
+
+        // Wait for the keyboard to take clock high, indicating bit has been sampled
+        while (digitalRead(IRQPin) < 1);
+    }
+
+    // Release data line (high) for the stop bit
+    pinMode(dataPin, INPUT_PULLUP);
+
+    // Wait for keyboard to acknowledge by taking clock low
+    while (digitalRead(IRQPin) > 0);
+
+    // Wait for keyboard ACK by checking data line goes low
+    while (digitalRead(dataPin) > 0);
+
+    // Reset pins to input mode with pull-up resistors
 #ifdef INPUT_PULLUP
     pinMode(IRQPin, INPUT_PULLUP);
     pinMode(dataPin, INPUT_PULLUP);
