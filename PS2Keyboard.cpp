@@ -72,7 +72,7 @@ static byte ledState = 0;
 #endif
 
 
-void sendPS2Command(byte command) { 
+static void sendPS2Command(byte command) { 
     pinMode(dataPin, OUTPUT);
     pinMode(IRQPin, OUTPUT);
 
