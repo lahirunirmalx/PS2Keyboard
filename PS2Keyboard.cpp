@@ -122,8 +122,8 @@ static void sendPS2Command(byte command) {
 #else
     pinMode(IRQPin, INPUT);
     digitalWrite(IRQPin, HIGH);
-    pinMode(DataPin, INPUT);
-    digitalWrite(DataPin, HIGH);
+    pinMode(dataPin, INPUT);
+    digitalWrite(dataPin, HIGH);
 #endif 
 }
 
