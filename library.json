@@ -21,15 +21,19 @@
     {
       "name": "Cuningan",
       "email": "cuninganreset@gmail.com"
+    },
+    {
+      "name": "Lahiru",
+      "email": "lahirunirmalx@gmail.com"
     }
   ],
   "repository":
   {
     "type": "git",
-    "url": "https://github.com/PaulStoffregen/PS2Keyboard.git"
+    "url": "https://github.com/lahirunirmalx/PS2Keyboard.git"
   },
-  "version": "2.4",
-  "homepage": "http://www.pjrc.com/teensy/td_libs_PS2Keyboard.html",
+  "version": "2.5",
+  "homepage": "",
   "frameworks": "arduino",
   "platforms":
   [

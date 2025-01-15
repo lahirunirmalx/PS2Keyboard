@@ -6,10 +6,15 @@
   ** Mostly rewritten Paul Stoffregen <paul@pjrc.com> 2010, 2011
   ** Modified for use beginning with Arduino 13 by L. Abraham Smith, <n3bah@microcompdesign.com> * 
   ** Modified for easy interrup pin assignement on method begin(datapin,irq_pin). Cuningan <cuninganreset@gmail.com> **
+  ** Modified for ESP32 support **
 
   for more information you can read the original wiki in arduino.cc
   at http://www.arduino.cc/playground/Main/PS2Keyboard
   or http://www.pjrc.com/teensy/td_libs_PS2Keyboard.html
+
+  Version 2.5 (January 2025)
+  - Better Inturpts
+  - Support for ESP32 
 
   Version 2.4 (March 2013)
   - Support Teensy 3.0, Arduino Due, Arduino Leonardo & other boards
