@@ -4,8 +4,9 @@
   Written by Christian Weichel <info@32leaves.net>
 
   ** Mostly rewritten Paul Stoffregen <paul@pjrc.com>, June 2010
-  ** Modified for use with Arduino 13 by L. Abraham Smith, <n3bah@microcompdesign.com> * 
-  ** Modified for easy interrup pin assignement on method begin(datapin,irq_pin). Cuningan <cuninganreset@gmail.com> **
+  ** Modified for use with Arduino 13 by L. Abraham Smith, <n3bah@microcompdesign.com>
+  ** Modified for easy interrupt pin assignment on method begin(datapin,irq_pin). Cuningan <cuninganreset@gmail.com>
+  ** Modified for ESP32/ESP8266 support by Lahiru <lahirunirmalx@gmail.com>
 
   This library is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
@@ -177,12 +178,8 @@ typedef struct {
 } PS2Keymap_t;
 
 
+// US keyboard layout (default)
 extern const PROGMEM PS2Keymap_t PS2Keymap_US;
-extern const PROGMEM PS2Keymap_t PS2Keymap_German;
-extern const PROGMEM PS2Keymap_t PS2Keymap_French;
-extern const PROGMEM PS2Keymap_t PS2Keymap_Spanish;
-extern const PROGMEM PS2Keymap_t PS2Keymap_Italian;
-extern const PROGMEM PS2Keymap_t PS2Keymap_UK;
 
 
 /**
@@ -214,7 +211,7 @@ class PS2Keyboard {
     static void clear();
 
     /**
-     * Retutns ps2 scan code.
+     * Returns the raw PS/2 scan code.
      */
     static uint8_t readScanCode(void);
 
