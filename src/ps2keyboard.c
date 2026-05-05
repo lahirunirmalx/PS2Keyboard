@@ -41,6 +41,16 @@ static volatile uint8_t s_buffer[PS2_BUFFER_SIZE];
 static volatile uint8_t s_head;
 static volatile uint8_t s_tail;
 
+/*
+  ISR frame state lives at file scope (rather than function-local statics)
+  so that ps2_send_byte() can clear it after re-enabling the clock-line
+  interrupt. Otherwise a stale bit_count from before the bit-bang can
+  corrupt the first scan code that follows an LED update.
+*/
+static volatile uint8_t  s_isr_bit_count;
+static volatile uint8_t  s_isr_incoming;
+static volatile uint32_t s_isr_prev_us;
+
 static gpio_num_t s_data_pin  = GPIO_NUM_NC;
 static gpio_num_t s_clock_pin = GPIO_NUM_NC;
 
@@ -88,6 +98,19 @@ static void ps2_busy_wait_us(uint32_t us)
     }
 }
 
+/* Spin-wait until `pin` reaches `target_level`, or until `timeout_us` elapses.
+   Returns true on success, false on timeout. */
+static bool ps2_wait_for_level(gpio_num_t pin, int target_level, uint32_t timeout_us)
+{
+    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_us;
+    while (gpio_get_level(pin) != target_level) {
+        if (esp_timer_get_time() > deadline) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* ---------- PS/2 command transmit (host -> keyboard) ---------- */
 
 static bool ps2_parity_odd(uint16_t data)
@@ -106,7 +129,12 @@ static bool ps2_parity_odd(uint16_t data)
 
   Reference: https://karooza.net/how-to-interface-a-ps2-keyboard
 */
-static void ps2_send_byte(uint8_t cmd_byte)
+/* PS/2 host-to-device framing tops out around 70us per clock half-cycle.
+   10ms per transition is comfortably generous and lets us bail out without
+   hanging the consumer task if the device stops clocking. */
+#define PS2_TX_PIN_TIMEOUT_US 10000U
+
+static esp_err_t ps2_send_byte(uint8_t cmd_byte)
 {
     uint16_t cmd = cmd_byte;
     if (!ps2_parity_odd(cmd)) {
@@ -127,31 +155,52 @@ static void ps2_send_byte(uint8_t cmd_byte)
     ps2_busy_wait_us(20);
     ps2_pin_input_pullup(s_clock_pin);
 
+    esp_err_t err = ESP_OK;
+
     /* 8 data bits + parity + stop bit. */
     for (int i = 0; i < 10; i++) {
-        while (ps2_read_pin(s_clock_pin) > 0) { }
+        if (!ps2_wait_for_level(s_clock_pin, 0, PS2_TX_PIN_TIMEOUT_US)) {
+            err = ESP_ERR_TIMEOUT;
+            goto out;
+        }
         ps2_write_pin(s_data_pin, cmd & 0x0001);
         cmd >>= 1;
-        while (ps2_read_pin(s_clock_pin) < 1) { }
+        if (!ps2_wait_for_level(s_clock_pin, 1, PS2_TX_PIN_TIMEOUT_US)) {
+            err = ESP_ERR_TIMEOUT;
+            goto out;
+        }
     }
 
     /* Release data line for the device-driven ack. */
     ps2_pin_input_pullup(s_data_pin);
 
-    /* Wait for keyboard ACK clock low + data low. */
-    while (ps2_read_pin(s_clock_pin) > 0) { }
-    while (ps2_read_pin(s_data_pin)  > 0) { }
+    /* Wait for keyboard ACK: clock low + data low. */
+    if (!ps2_wait_for_level(s_clock_pin, 0, PS2_TX_PIN_TIMEOUT_US) ||
+        !ps2_wait_for_level(s_data_pin,  0, PS2_TX_PIN_TIMEOUT_US)) {
+        err = ESP_ERR_TIMEOUT;
+    }
 
+out:
     ps2_pin_input_pullup(s_clock_pin);
     ps2_pin_input_pullup(s_data_pin);
 
+    /* The device-driven clock cycles during this bit-bang were masked, so
+       any stale bit_count carried over would corrupt the next genuine scan
+       code. Reset before re-arming the ISR. */
+    s_isr_bit_count = 0;
+    s_isr_incoming  = 0;
+    s_isr_prev_us   = (uint32_t)esp_timer_get_time();
+
     gpio_intr_enable(s_clock_pin);
+    return err;
 }
 
 static void ps2_update_leds(uint8_t leds)
 {
-    ps2_send_byte(PS2_LED_CONTROL);
-    ps2_send_byte(leds);
+    if (ps2_send_byte(PS2_LED_CONTROL) != ESP_OK) {
+        return;
+    }
+    (void)ps2_send_byte(leds);
 }
 
 /* ---------- ISR: clock-line falling edge ---------- */
@@ -159,36 +208,39 @@ static void ps2_update_leds(uint8_t leds)
 static void IRAM_ATTR ps2_isr_handler(void *arg)
 {
     (void)arg;
-    static uint8_t  bit_count = 0;
-    static uint8_t  incoming  = 0;
-    static int64_t  prev_us   = 0;
 
-    int64_t now_us = esp_timer_get_time();
-    int     val    = gpio_get_level(s_data_pin);
+    /* 32-bit time math is enough for the 250ms timeout and is cheaper on
+       the LX6 than the int64_t subtraction esp_timer_get_time() returns.
+       Wraparound (every ~71 minutes) is handled by unsigned subtraction. */
+    uint32_t now_us = (uint32_t)esp_timer_get_time();
+    int      val    = gpio_get_level(s_data_pin);
 
-    if ((now_us - prev_us) > 250000) {
-        bit_count = 0;
-        incoming  = 0;
+    if ((uint32_t)(now_us - s_isr_prev_us) > 250000U) {
+        s_isr_bit_count = 0;
+        s_isr_incoming  = 0;
     }
-    prev_us = now_us;
+    s_isr_prev_us = now_us;
 
-    uint8_t bit_pos = (uint8_t)(bit_count - 1);
+    /* On the start-bit call, bit_count is 0 and (0 - 1) underflows to 0xFF
+       which fails the <=7 check. Subsequent calls land bits 0..7 into
+       incoming. */
+    uint8_t bit_pos = (uint8_t)(s_isr_bit_count - 1);
     if (bit_pos <= 7) {
-        incoming |= (uint8_t)(val << bit_pos);
+        s_isr_incoming |= (uint8_t)(val << bit_pos);
     }
-    bit_count++;
+    s_isr_bit_count++;
 
-    if (bit_count == 11) {
+    if (s_isr_bit_count == 11) {
         uint8_t i = (uint8_t)(s_head + 1);
         if (i >= PS2_BUFFER_SIZE) {
             i = 0;
         }
         if (i != s_tail) {
-            s_buffer[i] = incoming;
+            s_buffer[i] = s_isr_incoming;
             s_head = i;
         }
-        bit_count = 0;
-        incoming  = 0;
+        s_isr_bit_count = 0;
+        s_isr_incoming  = 0;
     }
 }
 
@@ -209,9 +261,14 @@ static inline uint8_t ps2_get_scancode(void)
 
 /* ---------- scan-code -> ISO-8859-1 decoder ---------- */
 
-static char ps2_decode_iso8859(void)
+static uint8_t ps2_decode_iso8859(void)
 {
     static uint8_t state = 0;
+
+    /* Bail safely if a caller polled before ps2keyboard_begin() ran. */
+    if (s_keymap == NULL) {
+        return 0;
+    }
 
     while (1) {
         uint8_t scan = ps2_get_scancode();
@@ -270,7 +327,7 @@ static char ps2_decode_iso8859(void)
             ps2_update_leds(s_led_state);
         }
 
-        char ch = 0;
+        uint8_t ch = 0;
         if (state & PS2_MODIFIER) {
             switch (scan) {
                 case 0x70: ch = PS2_INSERT;     break;
@@ -287,30 +344,20 @@ static char ps2_decode_iso8859(void)
                 case 0x5A: ch = PS2_ENTER;      break;
                 default:                        break;
             }
-        } else if ((state & PS2_ALTGR) && s_keymap && s_keymap->uses_altgr) {
+        } else if ((state & PS2_ALTGR) && s_keymap->uses_altgr) {
             if (scan < PS2_KEYMAP_SIZE) {
-                ch = (char)s_keymap->altgr[scan];
+                ch = s_keymap->altgr[scan];
             }
-        } else if (s_caps_lock_on) {
-            if (state & (PS2_SHIFT_L | PS2_SHIFT_R)) {
-                if (scan < PS2_KEYMAP_SIZE) {
-                    ch = (char)s_keymap->noshift[scan];
-                }
-            } else {
-                if (scan < PS2_KEYMAP_SIZE) {
-                    ch = (char)s_keymap->shift[scan];
-                }
-            }
-        } else {
-            if (state & (PS2_SHIFT_L | PS2_SHIFT_R)) {
-                if (scan < PS2_KEYMAP_SIZE) {
-                    ch = (char)s_keymap->shift[scan];
-                }
-            } else {
-                if (scan < PS2_KEYMAP_SIZE) {
-                    ch = (char)s_keymap->noshift[scan];
-                }
-            }
+        } else if (scan < PS2_KEYMAP_SIZE) {
+            /* Caps Lock only inverts shift for alphabetic keys (a-z); for
+               everything else (digits, punctuation, function keys), Shift
+               is the sole modifier. Detect "letter" by inspecting the
+               unshifted entry rather than carrying a parallel flag table. */
+            bool shift_active = (state & (PS2_SHIFT_L | PS2_SHIFT_R)) != 0;
+            uint8_t ns = s_keymap->noshift[scan];
+            bool is_alpha = (ns >= 'a' && ns <= 'z');
+            bool effective_shift = shift_active ^ (is_alpha && s_caps_lock_on);
+            ch = effective_shift ? s_keymap->shift[scan] : ns;
         }
 
         state &= ~(PS2_BREAK | PS2_MODIFIER);
@@ -342,6 +389,9 @@ esp_err_t ps2keyboard_begin(gpio_num_t data_pin,
     s_num_lock_on    = false;
     s_scroll_lock_on = false;
     s_led_state      = 0;
+    s_isr_bit_count  = 0;
+    s_isr_incoming   = 0;
+    s_isr_prev_us    = 0;
 
     gpio_config_t data_cfg = {
         .pin_bit_mask = (1ULL << data_pin),
