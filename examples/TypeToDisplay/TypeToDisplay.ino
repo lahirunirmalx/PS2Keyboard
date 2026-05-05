@@ -1,33 +1,23 @@
-/* TypeToDisplay - PS2Keyboard keystrokes show on a standard LCD Display
-
-  Lcd support added 18/2/2018 D.R.Patterson
-    lcd character set:
+/*
+  PS2Keyboard Library - Type To Display Example
+  
+  Display PS/2 keyboard keystrokes on a standard LCD display.
+  Tested on Arduino Mega with a Keypad Shield.
+  
+  LCD character set reference:
   http://forum.arduino.cc/index.php?topic=19002.0
 
-  Tested on a mega with a Keypad Shield for Arduino
+  Wiring:
+    PS/2 Data  -> DataPin (19)
+    PS/2 Clock -> IRQpin (18)
+    PS/2 VCC   -> 5V
+    PS/2 GND   -> GND
 
-  PS2Keyboard now requries both pins specified for begin()
-  keyboard.begin(data_pin, irq_pin);
-
-  Valid irq pins:
-     Arduino Uno:  2, 3
-     Arduino Due:  All pins, except 13 (LED)
-     Arduino Mega: 2, 3, 18, 19, 20, 21
-     Teensy 2.0:   All pins, except 13 (LED)
-     Teensy 2.0:   5, 6, 7, 8
-     Teensy 1.0:   0, 1, 2, 3, 4, 6, 7, 16
-     Teensy++ 2.0: 0, 1, 2, 3, 18, 19, 36, 37
-     Teensy++ 1.0: 0, 1, 2, 3, 18, 19, 36, 37
-     Sanguino:     2, 10, 11
-
-  for more information you can read the original wiki in arduino.cc
-  at http://www.arduino.cc/playground/Main/PS2Keyboard
-  or http://www.pjrc.com/teensy/td_libs_PS2Keyboard.html
-
-  Like the Original library and example this is under LGPL license.
-
-  Modified by Cuninganreset@gmail.com on 2010-03-22
-  Modified by Paul Stoffregen <paul@pjrc.com> June 2010
+  More info: https://github.com/lahirunirmalx/PS2Keyboard
+  
+  License: LGPL v2.1
+  
+  Original LCD support by D.R.Patterson (2018)
 */
 
 #include <PS2Keyboard.h>

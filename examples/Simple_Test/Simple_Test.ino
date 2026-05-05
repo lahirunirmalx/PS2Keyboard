@@ -1,42 +1,38 @@
-/*  PS2Keyboard library example
+/*
+  PS2Keyboard Library - Simple Test Example
   
-  PS2Keyboard now requries both pins specified for begin()
+  This example demonstrates basic PS/2 keyboard input.
+  
+  Wiring:
+    PS/2 Data  -> DataPin
+    PS/2 Clock -> IRQpin
+    PS/2 VCC   -> 5V
+    PS/2 GND   -> GND
 
-  keyboard.begin(data_pin, irq_pin);
+  Valid IRQ pins by board:
+    Arduino Uno:    2, 3
+    Arduino Mega:   2, 3, 18, 19, 20, 21
+    Arduino Due:    All pins (except 13)
+    Teensy 3.x/4.x: All digital pins
+    ESP32/ESP8266:  All GPIO pins
+
+  More info: https://github.com/lahirunirmalx/PS2Keyboard
   
-  Valid irq pins:
-     Arduino Uno:  2, 3
-     Arduino Due:  All pins, except 13 (LED)
-     Arduino Mega: 2, 3, 18, 19, 20, 21
-     Teensy 3.0:   All pins, except 13 (LED)
-     Teensy 2.0:   5, 6, 7, 8
-     Teensy 1.0:   0, 1, 2, 3, 4, 6, 7, 16
-     Teensy++ 2.0: 0, 1, 2, 3, 18, 19, 36, 37
-     Teensy++ 1.0: 0, 1, 2, 3, 18, 19, 36, 37
-     Sanguino:     2, 10, 11
-  
-  for more information you can read the original wiki in arduino.cc
-  at http://www.arduino.cc/playground/Main/PS2Keyboard
-  or http://www.pjrc.com/teensy/td_libs_PS2Keyboard.html
-  
-  Like the Original library and example this is under LGPL license.
-  
-  Modified by Cuninganreset@gmail.com on 2010-03-22
-  Modified by Paul Stoffregen <paul@pjrc.com> June 2010
+  License: LGPL v2.1
 */
-   
+
 #include <PS2Keyboard.h>
 
 const int DataPin = 8;
-const int IRQpin =  5;
+const int IRQpin = 5;
 
 PS2Keyboard keyboard;
 
 void setup() {
   delay(1000);
   keyboard.begin(DataPin, IRQpin);
-  Serial.begin(9600);
-  Serial.println("Keyboard Test:");
+  Serial.begin(115200);
+  Serial.println("PS/2 Keyboard Test - Type to begin:");
 }
 
 void loop() {

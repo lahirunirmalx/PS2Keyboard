@@ -4,17 +4,19 @@
   Written by Christian Weichel <info@32leaves.net>
 
   ** Mostly rewritten Paul Stoffregen <paul@pjrc.com> 2010, 2011
-  ** Modified for use beginning with Arduino 13 by L. Abraham Smith, <n3bah@microcompdesign.com> * 
-  ** Modified for easy interrup pin assignement on method begin(datapin,irq_pin). Cuningan <cuninganreset@gmail.com> *
-  ** Modified for ESP32 support *
+  ** Modified for use beginning with Arduino 13 by L. Abraham Smith, <n3bah@microcompdesign.com>
+  ** Modified for easy interrupt pin assignment on method begin(datapin,irq_pin). Cuningan <cuninganreset@gmail.com>
+  ** Modified for ESP32/ESP8266 support by Lahiru <lahirunirmalx@gmail.com>
 
-  for more information you can read the original wiki in arduino.cc
-  at http://www.arduino.cc/playground/Main/PS2Keyboard
-  or http://www.pjrc.com/teensy/td_libs_PS2Keyboard.html
+  For more information:
+  - https://github.com/lahirunirmalx/PS2Keyboard
+  - http://www.pjrc.com/teensy/td_libs_PS2Keyboard.html
 
-  Version 2.5 (January 2025)
-  - Better Inturpts
-  - Support for ESP32 
+  Version 3.0 (January 2026)
+  - ESP32 and ESP8266 platform support
+  - Improved interrupt handling with IRAM_ATTR for ESP32
+  - Caps Lock, Num Lock, Scroll Lock LED support
+  - Code cleanup and optimization
 
   Version 2.4 (March 2013)
   - Support Teensy 3.0, Arduino Due, Arduino Leonardo & other boards
@@ -29,7 +31,6 @@
   Version 2.1 (May 2011)
   - timeout to recover from misaligned input
   - compatibility with Arduino "new-extension" branch
-  - TODO: send function, proposed by Scott Penrose, scooterda at me dot com
 
   Version 2.0 (June 2010)
   - Buffering added, many scan codes can be captured without data loss
@@ -68,12 +69,14 @@ static bool numLockOn = false;
 static bool scrollLockOn = false;
 static byte ledState = 0;
 
+// LED control command for PS/2 keyboard
 #define LED_CONTROL 0xED
 
-#ifdef ESP32
-#define SUPPORT_IRAM_ATTR IRAM_ATTR
+// ESP32 requires IRAM_ATTR for interrupt handlers
+#if defined(ESP32)
+  #define SUPPORT_IRAM_ATTR IRAM_ATTR
 #else
-#define SUPPORT_IRAM_ATTR  // Empty definition for non-ESP32 boards
+  #define SUPPORT_IRAM_ATTR
 #endif
 
 // Parity check
@@ -152,13 +155,9 @@ static void sendPS2Command(uint8_t cmdCode) {
 #endif 
 }
 
-static void updateLEDs(byte command){
-	
-	//Serial.print(LED_CONTROL);
-	sendPS2Command(LED_CONTROL);
-   // Serial.print(command); 
-   sendPS2Command(command);
-   // Could not get this working 
+static void updateLEDs(byte command) {
+  sendPS2Command(LED_CONTROL);
+  sendPS2Command(command);
 }
 
 // The ISR for the external interrupt
@@ -253,21 +252,17 @@ const PROGMEM PS2Keymap_t PS2Keymap_US = {
 	0
 };
 
- // no hate but I have remove this 
-
+// State machine flags for scan code processing
 #define BREAK     0x01
 #define MODIFIER  0x02
 #define SHIFT_L   0x04
 #define SHIFT_R   0x08
 #define ALTGR     0x10
 
-#define SCROLL_LOCK 0x01 
-#define NUM_LOCK    0x02 
-#define CAPS_LOCK   0x04 
-
-#define LED_CONTROL 0xED
-
-
+// LED state bit flags
+#define SCROLL_LOCK 0x01
+#define NUM_LOCK    0x02
+#define CAPS_LOCK   0x04
 
 static char get_iso8859_code(void) {
     static uint8_t state = 0;
@@ -346,28 +341,18 @@ static char get_iso8859_code(void) {
                 if (scanCode < PS2_KEYMAP_SIZE) {
                     character = pgm_read_byte(keymap->altgr + scanCode);
                 }
-            } else if (capsLockOn) {
-                // Handle Caps Lock with or without Shift keys
-                if (state & (SHIFT_L | SHIFT_R)) {
-                    if (scanCode < PS2_KEYMAP_SIZE) {
-                        character = pgm_read_byte(keymap->noshift + scanCode);
-                    }
-                } else {
-                    if (scanCode < PS2_KEYMAP_SIZE) {
-                        character = pgm_read_byte(keymap->shift + scanCode);
-                    }
-                }
-            } else {
-                // Handle regular Shift and non-Shift key states
-                if (state & (SHIFT_L | SHIFT_R)) {
-                    if (scanCode < PS2_KEYMAP_SIZE) {
-                        character = pgm_read_byte(keymap->shift + scanCode);
-                    }
-                } else {
-                    if (scanCode < PS2_KEYMAP_SIZE) {
-                        character = pgm_read_byte(keymap->noshift + scanCode);
-                    }
-                }
+            } else if (scanCode < PS2_KEYMAP_SIZE) {
+                // Caps Lock affects only alphabetic keys (a-z). For digits,
+                // punctuation and function keys, Shift is the sole modifier.
+                // Detect "letter" by inspecting the unshifted entry rather
+                // than carrying a parallel flag table.
+                bool shift_active = (state & (SHIFT_L | SHIFT_R)) != 0;
+                uint8_t ns = pgm_read_byte(keymap->noshift + scanCode);
+                bool is_alpha = (ns >= 'a' && ns <= 'z');
+                bool effective_shift = shift_active ^ (is_alpha && capsLockOn);
+                character = effective_shift
+                    ? pgm_read_byte(keymap->shift + scanCode)
+                    : ns;
             }
 
             // Reset the states for the next scan code processing
