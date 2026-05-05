@@ -341,28 +341,18 @@ static char get_iso8859_code(void) {
                 if (scanCode < PS2_KEYMAP_SIZE) {
                     character = pgm_read_byte(keymap->altgr + scanCode);
                 }
-            } else if (capsLockOn) {
-                // Handle Caps Lock with or without Shift keys
-                if (state & (SHIFT_L | SHIFT_R)) {
-                    if (scanCode < PS2_KEYMAP_SIZE) {
-                        character = pgm_read_byte(keymap->noshift + scanCode);
-                    }
-                } else {
-                    if (scanCode < PS2_KEYMAP_SIZE) {
-                        character = pgm_read_byte(keymap->shift + scanCode);
-                    }
-                }
-            } else {
-                // Handle regular Shift and non-Shift key states
-                if (state & (SHIFT_L | SHIFT_R)) {
-                    if (scanCode < PS2_KEYMAP_SIZE) {
-                        character = pgm_read_byte(keymap->shift + scanCode);
-                    }
-                } else {
-                    if (scanCode < PS2_KEYMAP_SIZE) {
-                        character = pgm_read_byte(keymap->noshift + scanCode);
-                    }
-                }
+            } else if (scanCode < PS2_KEYMAP_SIZE) {
+                // Caps Lock affects only alphabetic keys (a-z). For digits,
+                // punctuation and function keys, Shift is the sole modifier.
+                // Detect "letter" by inspecting the unshifted entry rather
+                // than carrying a parallel flag table.
+                bool shift_active = (state & (SHIFT_L | SHIFT_R)) != 0;
+                uint8_t ns = pgm_read_byte(keymap->noshift + scanCode);
+                bool is_alpha = (ns >= 'a' && ns <= 'z');
+                bool effective_shift = shift_active ^ (is_alpha && capsLockOn);
+                character = effective_shift
+                    ? pgm_read_byte(keymap->shift + scanCode)
+                    : ns;
             }
 
             // Reset the states for the next scan code processing
