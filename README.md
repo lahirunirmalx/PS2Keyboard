@@ -1,194 +1,145 @@
-# PS2Keyboard Library
+# ps2keyboard - ESP-IDF Component
 
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL%20v2.1-blue.svg)](https://www.gnu.org/licenses/lgpl-2.1)
-[![Version](https://img.shields.io/badge/version-3.0.0-green.svg)](https://github.com/lahirunirmalx/PS2Keyboard)
+[![Version](https://img.shields.io/badge/version-3.1.0-green.svg)](https://github.com/lahirunirmalx/PS2Keyboard)
 
-A PS/2 keyboard library for Arduino, Teensy, ESP32, and ESP8266 platforms.
+A native ESP-IDF component for reading from a PS/2 keyboard on the ESP32
+family. Ported from the long-standing Arduino `PS2Keyboard` library.
 
 ## Features
 
-- **Multi-platform support**: Arduino (Uno, Mega, Due, Leonardo), Teensy, ESP32, ESP8266
-- **Interrupt-driven**: Efficient interrupt-based input handling
-- **Lock key support**: Caps Lock, Num Lock, and Scroll Lock with LED indicators
-- **Easy to use**: Simple API with `begin()`, `available()`, and `read()` methods
-- **US keyboard layout**: Standard US QWERTY layout included
+- Pure ESP-IDF: uses `driver/gpio`, `esp_timer` and the IDF GPIO ISR service
+- Interrupt-driven scan-code capture (`IRAM_ATTR` ISR, runs from IRAM)
+- ISO-8859-1 character decoding with Shift / AltGr / Caps / Num / Scroll Lock
+- LED control (Caps / Num / Scroll Lock) by bit-banging the host-to-device line
+- Plain C API, no C++ runtime required
+- Supports any ESP32 variant (S2 / S3 / C3 / C6 / H2 / classic)
 
 ## Installation
 
-### Arduino IDE
+### Drop-in component
 
-1. Download this repository as a ZIP file
-2. In Arduino IDE: `Sketch` → `Include Library` → `Add .ZIP Library...`
-3. Select the downloaded ZIP file
+Clone (or submodule) this repository under your project's `components/`
+directory:
 
-### PlatformIO
+```bash
+mkdir -p components
+git clone https://github.com/lahirunirmalx/PS2Keyboard.git components/ps2keyboard
+```
 
-Add the following to your `platformio.ini`:
+### ESP-IDF Component Manager
 
-```ini
-lib_deps =
-  https://github.com/lahirunirmalx/PS2Keyboard
+Add it to your project's `idf_component.yml`:
+
+```yaml
+dependencies:
+  lahirunirmalx/ps2keyboard:
+    git: https://github.com/lahirunirmalx/PS2Keyboard.git
+    version: "*"
 ```
 
 ## Wiring
 
-Connect your PS/2 keyboard to your microcontroller:
+| PS/2 Pin | Signal | Connect To                          |
+|----------|--------|-------------------------------------|
+| 1        | DATA   | `data_pin` GPIO                     |
+| 3        | GND    | GND                                 |
+| 4        | VCC    | 5 V (PS/2 keyboards expect 5 V)     |
+| 5        | CLOCK  | `clock_pin` GPIO (interrupt source) |
 
-| PS/2 Pin | Signal | Connect To |
-|----------|--------|------------|
-| 1        | Data   | Data Pin (configurable) |
-| 3        | GND    | GND |
-| 4        | VCC    | 5V |
-| 5        | Clock  | IRQ Pin (configurable) |
-
-> **Note**: PS/2 keyboards require 5V power. Some boards may need level shifters for the data lines.
+> **Note:** ESP32 GPIOs are 3.3 V. PS/2 keyboards are 5 V open-collector with
+> internal pull-ups; in practice the lines idle high and the keyboard sinks
+> them low, so most modern ESP32 boards work directly. For long-term
+> reliability use a level shifter or a series resistor + clamping diode.
 
 ## Quick Start
 
-```cpp
-#include <PS2Keyboard.h>
+```c
+#include "ps2keyboard.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
-const int DataPin = 8;
-const int IRQpin = 5;
+#define PS2_DATA_PIN   GPIO_NUM_18
+#define PS2_CLOCK_PIN  GPIO_NUM_19
 
-PS2Keyboard keyboard;
+void app_main(void)
+{
+    ESP_ERROR_CHECK(ps2keyboard_begin(PS2_DATA_PIN, PS2_CLOCK_PIN, NULL));
 
-void setup() {
-  Serial.begin(115200);
-  keyboard.begin(DataPin, IRQpin);
-  Serial.println("PS/2 Keyboard Ready");
-}
-
-void loop() {
-  if (keyboard.available()) {
-    char c = keyboard.read();
-    
-    if (c == PS2_ENTER) {
-      Serial.println();
-    } else if (c == PS2_TAB) {
-      Serial.print("[Tab]");
-    } else if (c == PS2_ESC) {
-      Serial.print("[ESC]");
-    } else if (c == PS2_BACKSPACE) {
-      Serial.print("[Backspace]");
-    } else {
-      Serial.print(c);
+    while (1) {
+        if (ps2keyboard_available()) {
+            int c = ps2keyboard_read();
+            if (c == PS2_ENTER)      printf("\n");
+            else if (c == PS2_TAB)   printf("[Tab]");
+            else if (c == PS2_ESC)   printf("[ESC]");
+            else if (c > 0)          putchar(c);
+            fflush(stdout);
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
     }
-  }
 }
 ```
 
-## Valid IRQ Pins
+A complete buildable example lives in [examples/simple_test](examples/simple_test/).
+Build it with:
 
-| Board | Valid IRQ Pins |
-|-------|----------------|
-| Arduino Uno | 2, 3 |
-| Arduino Mega | 2, 3, 18, 19, 20, 21 |
-| Arduino Due | All pins (except 13) |
-| Arduino Leonardo | 0, 1, 2, 3 |
-| Teensy 3.x/4.x | All digital pins |
-| Teensy 2.0 | 5, 6, 7, 8 |
-| ESP32 | All GPIO pins |
-| ESP8266 | All GPIO pins |
+```bash
+cd examples/simple_test
+idf.py set-target esp32
+idf.py build flash monitor
+```
 
 ## API Reference
 
-### Methods
+```c
+esp_err_t ps2keyboard_begin(gpio_num_t data_pin,
+                            gpio_num_t clock_pin,
+                            const ps2_keymap_t *keymap);
+void      ps2keyboard_end(void);
 
-| Method | Description |
-|--------|-------------|
-| `begin(dataPin, irqPin)` | Initialize the keyboard with data and clock pins |
-| `begin(dataPin, irqPin, keymap)` | Initialize with a custom keymap |
-| `available()` | Returns `true` if a key is available to read |
-| `read()` | Returns the next character (UTF-8 encoded) |
-| `readUnicode()` | Returns the next character as Unicode |
-| `readScanCode()` | Returns the raw PS/2 scan code |
-| `clear()` | Clears the keyboard buffer |
+bool      ps2keyboard_available(void);
+void      ps2keyboard_clear(void);
 
-### Special Key Constants
-
-```cpp
-PS2_ENTER       // Enter key
-PS2_TAB         // Tab key
-PS2_ESC         // Escape key
-PS2_BACKSPACE   // Backspace key
-PS2_DELETE      // Delete key
-PS2_INSERT      // Insert key
-PS2_HOME        // Home key
-PS2_END         // End key
-PS2_PAGEUP      // Page Up key
-PS2_PAGEDOWN    // Page Down key
-PS2_UPARROW     // Up arrow
-PS2_DOWNARROW   // Down arrow
-PS2_LEFTARROW   // Left arrow
-PS2_RIGHTARROW  // Right arrow
-PS2_F1 - PS2_F12 // Function keys
+uint8_t   ps2keyboard_read_scancode(void);  /* raw scan code  */
+int       ps2keyboard_read(void);           /* UTF-8 byte     */
+int       ps2keyboard_read_unicode(void);   /* code point     */
 ```
 
-## Platform-Specific Configuration
+Pass `NULL` as the keymap to use the bundled `ps2_keymap_us`. Custom layouts
+can be supplied as `const ps2_keymap_t` instances.
 
-### ESP32
+### Special key constants
 
-```ini
-[env:esp32dev]
-platform = espressif32
-board = esp32dev
-framework = arduino
-monitor_speed = 115200
-lib_deps =
-  https://github.com/lahirunirmalx/PS2Keyboard
-```
+`PS2_ENTER`, `PS2_TAB`, `PS2_ESC`, `PS2_BACKSPACE`, `PS2_DELETE`, `PS2_INSERT`,
+`PS2_HOME`, `PS2_END`, `PS2_PAGEUP`, `PS2_PAGEDOWN`, `PS2_UPARROW`,
+`PS2_DOWNARROW`, `PS2_LEFTARROW`, `PS2_RIGHTARROW`, `PS2_F1`..`PS2_F12`,
+`PS2_SCROLL`.
 
-### Arduino Uno
+## Notes on the GPIO ISR service
 
-```ini
-[env:uno]
-platform = atmelavr
-board = uno
-framework = arduino
-monitor_speed = 115200
-lib_deps =
-  https://github.com/lahirunirmalx/PS2Keyboard
-```
-
-## Examples
-
-- **Simple_Test**: Basic keyboard input example
-- **TypeToDisplay**: Display keyboard input on an LCD
+`ps2keyboard_begin()` calls `gpio_install_isr_service(ESP_INTR_FLAG_IRAM)`. If
+your application has already installed the service with different flags this
+call returns `ESP_ERR_INVALID_STATE`, which is treated as success - the
+existing service is reused.
 
 ## Version History
 
-- **v3.0.0** (January 2026)
-  - ESP32 and ESP8266 platform support
-  - Improved interrupt handling
-  - Caps Lock, Num Lock, Scroll Lock LED support
-  - Code cleanup and optimization
-
-- **v2.4** (March 2013)
-  - Teensy 3.0, Arduino Due, Leonardo support
-
-- **v2.0** (June 2010)
-  - Buffering, shift key support, indexed lookups
+- **v3.1.0** (May 2026) — Native ESP-IDF port (this branch)
+- **v3.0.0** (January 2026) — ESP32 / ESP8266 (Arduino) support, Lock-key LEDs
+- **v2.x** — Multi-platform Arduino library (Uno, Mega, Due, Teensy)
 
 ## Credits
 
-- Original library by [PJRC](http://www.pjrc.com/teensy/td_libs_PS2Keyboard.html)
-- Christian Weichel - Original author
-- Paul Stoffregen - Major rewrite
-- L. Abraham Smith - Arduino 13 modifications
-- Cuningan - Flexible pin assignment
-- Lahiru - ESP32/ESP8266 support and maintenance
+Original library by [PJRC](http://www.pjrc.com/teensy/td_libs_PS2Keyboard.html).
+
+- Christian Weichel — original author
+- Paul Stoffregen — major rewrite
+- L. Abraham Smith — Arduino 13 modifications
+- Cuningan — flexible pin assignment
+- Lahiru Nirmal — ESP32 / ESP8266 (Arduino) port and ESP-IDF port
 
 ## License
 
-This library is licensed under the [GNU Lesser General Public License v2.1](https://www.gnu.org/licenses/lgpl-2.1.html).
-
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
-
-## Support
-
-- [GitHub Issues](https://github.com/lahirunirmalx/PS2Keyboard/issues)
-- [Arduino Forum](https://forum.arduino.cc)
-- [ESP32 Forum](https://www.esp32.com)
+GNU Lesser General Public License v2.1
+([LGPL-2.1](https://www.gnu.org/licenses/lgpl-2.1.html)).
