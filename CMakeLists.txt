@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "src/ps2keyboard.c"
+        "src/ps2keymap_us.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        driver
+        esp_timer
+)
