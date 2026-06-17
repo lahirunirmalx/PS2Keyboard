@@ -1,7 +1,10 @@
 version: "3.1.0"
 description: "PS/2 keyboard driver for ESP-IDF (ESP32 family). Provides scan code reading, ISO-8859 character translation, modifier handling and Caps/Num/Scroll Lock LED control."
 url: "https://github.com/lahirunirmalx/PS2Keyboard"
-license: "LGPL-2.1"
+repository: "https://github.com/lahirunirmalx/PS2Keyboard.git"
+documentation: "https://github.com/lahirunirmalx/PS2Keyboard#readme"
+issues: "https://github.com/lahirunirmalx/PS2Keyboard/issues"
+license: "LGPL-2.1-or-later"
 maintainers:
   - "Lahiru <lahirunirmalx@gmail.com>"
 tags:
@@ -12,3 +15,5 @@ tags:
 dependencies:
   idf:
     version: ">=4.4"
+examples:
+  - path: ./examples/simple_test

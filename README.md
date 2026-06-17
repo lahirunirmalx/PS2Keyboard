@@ -17,25 +17,29 @@ family. Ported from the long-standing Arduino `PS2Keyboard` library.
 
 ## Installation
 
+### ESP-IDF Component Manager (recommended)
+
+Install from the [ESP Component Registry](https://components.espressif.com/components/lahirunirmalx/ps2keyboard):
+
+```bash
+idf.py add-dependency "lahirunirmalx/ps2keyboard^3.1.0"
+```
+
+Or declare it in your project's `idf_component.yml`:
+
+```yaml
+dependencies:
+  lahirunirmalx/ps2keyboard: "^3.1.0"
+```
+
 ### Drop-in component
 
-Clone (or submodule) this repository under your project's `components/`
-directory:
+Alternatively, clone (or submodule) this repository under your project's
+`components/` directory:
 
 ```bash
 mkdir -p components
 git clone https://github.com/lahirunirmalx/PS2Keyboard.git components/ps2keyboard
-```
-
-### ESP-IDF Component Manager
-
-Add it to your project's `idf_component.yml`:
-
-```yaml
-dependencies:
-  lahirunirmalx/ps2keyboard:
-    git: https://github.com/lahirunirmalx/PS2Keyboard.git
-    version: "*"
 ```
 
 ## Wiring

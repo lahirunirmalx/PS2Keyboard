@@ -1,0 +1,18 @@
+# ESP-IDF / PlatformIO build artifacts
+build/
+.pio/
+managed_components/
+dependencies.lock
+
+# Per-project IDF config (defaults live in sdkconfig.defaults)
+sdkconfig
+sdkconfig.old
+
+# Component archive produced by `compote component pack`
+dist/
+*.tgz
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store

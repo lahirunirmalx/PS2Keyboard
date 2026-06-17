@@ -1,0 +1,24 @@
+name: Publish to ESP Component Registry
+
+# Publishes the component to https://components.espressif.com whenever a
+# release tag (e.g. v3.1.0) is pushed. Requires an IDF_COMPONENT_API_TOKEN
+# secret created from your Espressif registry account.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload component
+        uses: espressif/upload-components-ci-action@v2
+        with:
+          name: "ps2keyboard"
+          namespace: "lahirunirmalx"
+          api_token: ${{ secrets.IDF_COMPONENT_API_TOKEN }}
